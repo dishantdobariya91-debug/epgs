@@ -39,5 +39,5 @@ jobs:
           path: |
             output_ci/**/ledger/**
             output_ci/**/runs/**
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
