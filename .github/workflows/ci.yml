@@ -1,3 +1,5 @@
+# CI: determinism proof + ledger artifact upload
+
 name: CI
 
 on:
