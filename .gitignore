@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# CI / local outputs
+output/
+output_ci/
+
+# OS
+.DS_Store
+Thumbs.db
