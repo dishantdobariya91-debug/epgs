@@ -21,23 +21,28 @@ def apply_profile(scenario: Dict[str, Any]) -> Dict[str, Any]:
 
     # ---- Governance Matrix ----
 
+    # FAST-NOTREADY: should block, but not issue an explicit mid-execution stop
     if "FAST-NOTREADY" in name:
         result["permission"] = "BLOCK"
-        result["stop_issued"] = True
+        result["stop_issued"] = False
 
+    # NRRP-TERMINATE: terminal NRRP condition -> blocked outcome, no mid-exec stop_issued
     elif "NRRP-TERMINATE" in name:
         result["permission"] = "BLOCK"
-        result["stop_issued"] = True
+        result["stop_issued"] = False
 
     elif "CAUTION-ASSIST" in name:
         result["permission"] = "ASSIST"
+        result["stop_issued"] = False
 
     elif "MIDSTOP-DEGRADE" in name:
+        # mid-execution stop is issued but initial permission is ALLOW
         result["permission"] = "ALLOW"
         result["stop_issued"] = True
 
     elif "STABLE-SAFE" in name:
         result["permission"] = "ALLOW"
+        result["stop_issued"] = False
 
     # NeuroPause rule (tamper tests depend on this key)
     if scenario.get("tampered", False):
