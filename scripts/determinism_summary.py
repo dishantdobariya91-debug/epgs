@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import uuid
 from pathlib import Path
 
 import epgs.orchestrator.run as run_module
@@ -19,11 +20,8 @@ SCENARIOS = [
 
 class FixedUUIDSequence:
     """
-    Deterministic UUID generator (CI-only).
-
-    run_scenario() calls uuid.uuid4() twice:
-      1) run_id
-      2) rblock_id
+    CI-only deterministic UUID injector.
+    Ensures identical UUIDs for run #1 and run #2 of the same scenario.
     """
 
     def __init__(self, run_id: str, rblock_id: str):
@@ -39,23 +37,12 @@ class FixedUUIDSequence:
         return v
 
 
-def comparable_result(res: dict) -> dict:
-    """
-    Strip filesystem-dependent fields before determinism comparison.
-    """
-    return {
-        k: v
-        for k, v in res.items()
-        if k != "ledger_dir"
-    }
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--out",
         default="output_ci",
-        help="Output root for CI determinism runs",
+        help="Output root for CI runs",
     )
     args = parser.parse_args()
 
@@ -64,36 +51,45 @@ def main() -> int:
 
     print("=== Determinism Proof Summary (UGS-2027 EPGS) ===")
     print("Format:")
-    print("[#] SCENARIO | SECTOR | PERM | STOP | FINAL | HASH | LEDGER_RUN1 | LEDGER_RUN2 | VERIFY | MATCH")
+    print(
+        "[#] SCENARIO | SECTOR | PERM | STOP | FINAL | HASH | "
+        "LEDGER_RUN1 | LEDGER_RUN2 | VERIFY | MATCH"
+    )
     print("-" * 120)
 
     ok = True
 
     for i, scenario_path in enumerate(SCENARIOS):
-        # Scenario-specific deterministic IDs (prevents collisions)
-        run_id = f"11111111-1111-1111-1111-{i:012d}"
-        rblock_id = f"22222222-2222-2222-2222-{i:012d}"
+        # --- Fixed UUIDs (deterministic identity) ---
+        run_uuid = f"11111111-1111-1111-1111-{i:012d}"
+        rblock_uuid = f"22222222-2222-2222-2222-{i:012d}"
 
-        fixed = FixedUUIDSequence(run_id, rblock_id)
+        fixed = FixedUUIDSequence(run_uuid, rblock_uuid)
+        run_module.uuid.uuid4 = fixed.uuid4  # CI-only monkey patch
 
-        # Patch uuid ONLY inside orchestrator module (CI-only)
-        run_module.uuid.uuid4 = fixed.uuid4
+        # --- UNIQUE per-run isolation (CRITICAL FIX) ---
+        run_ns = f"scenario_{i}_{uuid.uuid4().hex[:8]}"
+        out1 = out_root / run_ns / "run1"
+        out2 = out_root / run_ns / "run2"
 
-        out1 = out_root / f"scenario_{i}_run1"
-        out2 = out_root / f"scenario_{i}_run2"
-
-        # ----- Run #1 -----
+        # --- Run #1 ---
         fixed.reset()
-        res1 = run_scenario(scenario_path, output_root=str(out1))
+        res1 = run_scenario(
+            scenario_path,
+            output_root=str(out1),
+        )
         v1 = verify_chain(res1["ledger_dir"])
 
-        # ----- Run #2 -----
+        # --- Run #2 ---
         fixed.reset()
-        res2 = run_scenario(scenario_path, output_root=str(out2))
+        res2 = run_scenario(
+            scenario_path,
+            output_root=str(out2),
+        )
         v2 = verify_chain(res2["ledger_dir"])
 
         same = (
-            comparable_result(res1) == comparable_result(res2)
+            res1 == res2
             and v1.get("ok") is True
             and v2.get("ok") is True
         )
