@@ -1,18 +1,15 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
+*.py[cod]
 
 # Virtual environments
 .venv/
 venv/
 
-# CI / local outputs
-output/
-output_ci/
+# Packaging artifacts
+*.egg-info/
+dist/
+build/
 
-# OS
-.DS_Store
-Thumbs.db
+# CI outputs
+output_ci/
