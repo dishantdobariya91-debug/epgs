@@ -1,28 +1,46 @@
 from __future__ import annotations
 
+import json
+import hashlib
 from pathlib import Path
-from typing import Any
-
-from epgs.core.crypto import canonical_json, chained_hash
+from typing import Dict, Any
 
 
 def write_rblock(
-    ledger_dir: Path,
-    rblock_payload: dict[str, Any],
-    previous_hash: str,
-) -> tuple[str, str]:
+    payload: Dict[str, Any],
+    previous_hash: str | None,
+    ledger_dir: str | Path,
+) -> str:
+    """
+    Write an immutable R-Block to the ledger directory.
+
+    CONTRACT (tests depend on this):
+    - ledger_dir MUST be filesystem path
+    - payload MUST be dict
+    - returns rblock_hash (hex string)
+    """
+
+    ledger_dir = Path(ledger_dir)
     ledger_dir.mkdir(parents=True, exist_ok=True)
 
-    rblock_hash = chained_hash(rblock_payload, previous_hash)
-    rblock_id = rblock_payload["rblock_id"]
+    block = dict(payload)
+    block["previous_hash"] = previous_hash
 
-    out_path = ledger_dir / f"{rblock_id}.json"
-    if out_path.exists():
+    raw = json.dumps(
+        block,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    rblock_hash = hashlib.sha256(raw).hexdigest()
+    block["rblock_hash"] = rblock_hash
+
+    block_path = ledger_dir / f"{rblock_hash}.json"
+
+    if block_path.exists():
         raise RuntimeError("R-Block already exists. Immutability violation.")
 
-    record = dict(rblock_payload)
-    record["previous_hash"] = previous_hash
-    record["rblock_hash"] = rblock_hash
+    with block_path.open("w", encoding="utf-8") as f:
+        json.dump(block, f, indent=2, sort_keys=True)
 
-    out_path.write_text(canonical_json(record), encoding="utf-8")
-    return rblock_hash, rblock_id
+    return rblock_hash
