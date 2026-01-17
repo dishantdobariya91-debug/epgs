@@ -1,93 +1,121 @@
-from pathlib import Path
+# src/epgs/orchestrator/run.py
+
+from __future__ import annotations
+
 import json
-import hashlib
-import shutil
 import uuid
+import hashlib
+from pathlib import Path
+from typing import Dict, Any
+
+from epgs.profiles.base import apply_profile
+from epgs.modules.neurochain import write_rblock
+
+
+# ------------------------------------------------------------------
+# Public module attributes (tests expect these)
+# ------------------------------------------------------------------
 
 __all__ = ["run_scenario", "uuid"]
 
 
-def derive_permission(name: str) -> str:
-    n = name.upper()
-    if "FAST-NOTREADY" in n:
-        return "BLOCK"
-    if "NRRP-TERMINATE" in n:
-        return "BLOCK"
-    if "CAUTION-ASSIST" in n:
-        return "ASSIST"
-    return "ALLOW"
+# ------------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------------
 
-
-def permission_flags(permission: str):
-    return {
-        "stop_issued": permission == "BLOCK",
-        "neuropause": permission == "ASSIST",
-    }
-
-
-def stable_hash(payload: dict) -> str:
+def _hash_payload(payload: Dict[str, Any]) -> str:
+    """
+    Deterministic hash for any JSON-serializable payload.
+    """
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()
 
 
-def write_rblock(ledger_dir: Path, payload: dict) -> str:
-    # compute hash without rblock_hash
-    temp = dict(payload)
-    temp.pop("rblock_hash", None)
-
-    rblock_hash = stable_hash(temp)
-    payload["rblock_hash"] = rblock_hash
-
-    path = ledger_dir / f"{rblock_hash}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, sort_keys=True)
-
-    return rblock_hash
+def _load_scenario(path: str | Path) -> Dict[str, Any]:
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def run_scenario(scenario_path: str, output_root: str) -> dict:
+# ------------------------------------------------------------------
+# Core execution
+# ------------------------------------------------------------------
+
+def run_scenario(
+    scenario_path: str | Path,
+    *,
+    output_root: str | Path,
+) -> Dict[str, Any]:
+    """
+    Execute a single EPGS scenario deterministically.
+
+    This function is intentionally conservative and explicit,
+    because CI + integration tests depend on its output contract.
+    """
+
     scenario_path = Path(scenario_path)
     output_root = Path(output_root)
 
-    scenario_name = scenario_path.stem
-    permission = derive_permission(scenario_name)
-    flags = permission_flags(permission)
+    scenario = _load_scenario(scenario_path)
 
-    run_dir = output_root / scenario_name
-    ledger_dir = run_dir / "ledger"
+    scenario_name = scenario.get("scenario", scenario_path.stem)
 
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    ledger_dir.mkdir(parents=True)
+    # Unique but deterministic-per-run namespace
+    run_id = uuid.uuid4().hex[:8]
 
-    # ── GENESIS BLOCK
-    genesis = {
+    ledger_dir = output_root / scenario_name / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------------
+    # Apply profile (tests require this hook)
+    # --------------------------------------------------------------
+    profile_result = apply_profile(scenario)
+
+    # Defensive defaults expected by tests
+    permission = profile_result.get("permission", "ALLOW")
+    stop_issued = profile_result.get("stop_issued", False)
+    neuro_pause = profile_result.get("neuro_pause", False)
+
+    # --------------------------------------------------------------
+    # Execution payload (canonical)
+    # --------------------------------------------------------------
+    execution_payload: Dict[str, Any] = {
         "scenario": scenario_name,
-        "sector": "SAFETY",
         "permission": permission,
-        "final": False,
-        "previous_hash": "GENESIS",
-        **flags,
+        "stop_issued": stop_issued,
+        "neuro_pause": neuro_pause,
     }
 
-    prev_hash = write_rblock(ledger_dir, genesis)
+    execution_hash = _hash_payload(execution_payload)
 
-    # ── FINAL BLOCK
-    final = {
+    # --------------------------------------------------------------
+    # Ledger write (immutable)
+    # --------------------------------------------------------------
+    rblock_payload = {
         "scenario": scenario_name,
-        "sector": "SAFETY",
         "permission": permission,
-        "final": True,
-        "previous_hash": prev_hash,
-        **flags,
+        "stop_issued": stop_issued,
+        "neuro_pause": neuro_pause,
+        "previous_hash": None,
+        "rblock_hash": execution_hash,
     }
 
-    final_hash = write_rblock(ledger_dir, final)
+    rblock_hash = write_rblock(
+        payload=rblock_payload,
+        ledger_dir=ledger_dir,
+    )
 
+    # --------------------------------------------------------------
+    # Return contract (tests rely on these keys)
+    # --------------------------------------------------------------
     return {
         "scenario": scenario_name,
-        "permission": permission,
-        "hash": final_hash,
+        "hash": execution_hash,
+        "rblock_hash": rblock_hash,
         "ledger_dir": str(ledger_dir),
-        "ledger_path": str(ledger_dir / f"{final_hash}.json"),
+        "ledger_path": str(ledger_dir),
+        "permission": permission,
+        "stop_issued": stop_issued,
+        "neuro_pause": neuro_pause,
+        "ok": True,
     }
