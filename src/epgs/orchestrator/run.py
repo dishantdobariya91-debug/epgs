@@ -85,9 +85,11 @@ def run_scenario(
     }
 
     rblock_hash = write_rblock(
-        payload=rblock_payload,
-        previous_hash=None,
-        out_dir=str(ledger_dir),
+    rblock_payload,
+    None,
+    str(ledger_dir),
+)
+
     )
 
     # --------------------------------------------------------------
