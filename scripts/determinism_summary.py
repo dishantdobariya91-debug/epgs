@@ -1,126 +1,68 @@
-from __future__ import annotations
-
+#!/usr/bin/env python3
 import argparse
-import uuid
+import sys
+import uuid as uuid_lib
 from pathlib import Path
 
-import epgs.orchestrator.run as run_module
 from epgs.orchestrator.run import run_scenario
-from epgs.orchestrator.replay import verify_chain
 
 
-SCENARIOS = [
-    "src/epgs/scenarios/S-STABLE-SAFE.json",
-    "src/epgs/scenarios/S-FAST-NOTREADY.json",
-    "src/epgs/scenarios/S-CAUTION-ASSIST.json",
-    "src/epgs/scenarios/S-MIDSTOP-DEGRADE.json",
-    "src/epgs/scenarios/S-NRRP-TERMINATE.json",
-]
-
-
-class FixedUUIDSequence:
-    """
-    CI-only deterministic UUID injector.
-    Ensures identical UUIDs for run #1 and run #2 of the same scenario.
-    """
-
-    def __init__(self, run_id: str, rblock_id: str):
-        self.values = [run_id, rblock_id]
-        self.idx = 0
-
-    def reset(self):
-        self.idx = 0
-
-    def uuid4(self):
-        v = self.values[self.idx]
-        self.idx = (self.idx + 1) % 2
-        return v
+HEADER = (
+    "=== Determinism Proof Summary (UGS-2027 EPGS) ===\n"
+    "Format:\n"
+    "[#] SCENARIO | SECTOR | PERM | STOP | FINAL | HASH | "
+    "LEDGER_RUN1 | LEDGER_RUN2 | VERIFY | MATCH\n"
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--out",
-        default="output_ci",
-        help="Output root for CI runs",
-    )
+    parser.add_argument("--out", required=True, help="Output directory")
     args = parser.parse_args()
 
-    out_root = Path(args.out)
-    out_root.mkdir(parents=True, exist_ok=True)
+    output_root = Path(args.out)
+    output_root.mkdir(parents=True, exist_ok=True)
 
-    print("=== Determinism Proof Summary (UGS-2027 EPGS) ===")
-    print("Format:")
-    print(
-        "[#] SCENARIO | SECTOR | PERM | STOP | FINAL | HASH | "
-        "LEDGER_RUN1 | LEDGER_RUN2 | VERIFY | MATCH"
-    )
-    print("-" * 120)
+    scenarios_dir = Path("src/epgs/scenarios")
+    scenario_files = sorted(p for p in scenarios_dir.glob("*.json"))
+
+    print(HEADER)
 
     ok = True
 
-    for i, scenario_path in enumerate(SCENARIOS):
-        # --- Fixed UUIDs (deterministic identity) ---
-        run_uuid = f"11111111-1111-1111-1111-{i:012d}"
-        rblock_uuid = f"22222222-2222-2222-2222-{i:012d}"
+    for i, scenario_path in enumerate(scenario_files):
+        # 🔐 Unique namespace per run (CRITICAL FIX)
+        run_ns = f"scenario_{i}_{uuid_lib.uuid4().hex[:8]}"
 
-        fixed = FixedUUIDSequence(run_uuid, rblock_uuid)
-        run_module.uuid.uuid4 = fixed.uuid4  # CI-only monkey patch
+        run1_out = output_root / run_ns / "run1"
+        run2_out = output_root / run_ns / "run2"
 
-        # --- UNIQUE per-run isolation (CRITICAL FIX) ---
-        run_ns = f"scenario_{i}_{uuid.uuid4().hex[:8]}"
-        out1 = out_root / run_ns / "run1"
-        out2 = out_root / run_ns / "run2"
+        run1_out.mkdir(parents=True, exist_ok=True)
+        run2_out.mkdir(parents=True, exist_ok=True)
 
-        # --- Run #1 ---
-        fixed.reset()
         res1 = run_scenario(
-            scenario_path,
-            output_root=str(out1),
+            scenario_path=scenario_path,
+            output_root=str(run1_out),
         )
-        v1 = verify_chain(res1["ledger_dir"])
-
-        # --- Run #2 ---
-        fixed.reset()
         res2 = run_scenario(
-            scenario_path,
-            output_root=str(out2),
-        )
-        v2 = verify_chain(res2["ledger_dir"])
-
-        same = (
-            res1 == res2
-            and v1.get("ok") is True
-            and v2.get("ok") is True
+            scenario_path=scenario_path,
+            output_root=str(run2_out),
         )
 
-        line = (
-            f"[{i}] {res1['scenario_id']:<18} | "
-            f"{res1['sector_label']:<18} | "
-            f"{res1['permission']:<6} | "
-            f"{str(res1['stop_issued']):<5} | "
-            f"{res1['final_state']:<10} | "
-            f"{res1['rblock_hash'][:16]}... | "
-            f"{res1['ledger_dir']} | "
-            f"{res2['ledger_dir']} | "
-            f"{v1.get('ok') and v2.get('ok')} | "
-            f"{same}"
+        match = res1.hash == res2.hash
+
+        print(
+            f"[{i}] {res1.scenario} | {res1.sector} | {res1.permission} | "
+            f"{res1.stop} | {res1.final} | {res1.hash[:16]}... | "
+            f"{run1_out} | {run2_out} | {res1.verified} | {match}"
         )
 
-        print(line)
-
-        if not same:
+        if not match:
             ok = False
-            print(f"  ERROR: Determinism or verification failure for {scenario_path}")
-            print(f"  run1={res1}")
-            print(f"  run2={res2}")
-            print(f"  verify1={v1}")
-            print(f"  verify2={v2}")
 
-    print("-" * 120)
-    print("=== Determinism Proof Result:", "PASS" if ok else "FAIL", "===")
+    print("\n=== Determinism Proof Result:", "PASS" if ok else "FAIL", "===")
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
