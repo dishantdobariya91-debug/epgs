@@ -1,0 +1,21 @@
+{
+  "scenario_id": "S-MIDSTOP-DEGRADE",
+  "sector_label": "ENERGY",
+  "requests": [
+    {
+      "execution_id": "exec-stop-001",
+      "action_type": "IRREVERSIBLE",
+      "sector_label": "ENERGY",
+      "requested_at_ms": 0
+    }
+  ],
+  "temporal": [
+    { "step_index": 0, "stable_ms": 200, "jitter": false },
+    { "step_index": 1, "stable_ms": 140, "jitter": false }
+  ],
+  "ube_vectors": [
+    { "step_index": 0, "phi": 0.90, "degradation_rate": 0.01, "risk_load": 0.20 },
+    { "step_index": 1, "phi": 0.89, "degradation_rate": 0.02, "risk_load": 0.25 },
+    { "step_index": 2, "phi": 0.40, "degradation_rate": 0.20, "risk_load": 0.80 }
+  ]
+}

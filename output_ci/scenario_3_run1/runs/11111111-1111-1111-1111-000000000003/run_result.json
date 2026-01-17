@@ -1,0 +1,1 @@
+{'run_id': '11111111-1111-1111-1111-000000000003', 'scenario_id': 'S-MIDSTOP-DEGRADE', 'sector_label': 'ENERGY', 'permission': 'ALLOW', 'stop_issued': True, 'terminal_stop': True, 'final_state': 'TERMINATED', 'rblock_hash': 'ae83866b1d8867cad59509eef51c72f5d33a19f77dd5581eb4601e8f069f0cfe', 'ledger_dir': 'output_ci\\scenario_3_run1\\ledger\\11111111-1111-1111-1111-000000000003'}

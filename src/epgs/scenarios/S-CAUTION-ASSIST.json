@@ -1,0 +1,20 @@
+{
+  "scenario_id": "S-CAUTION-ASSIST",
+  "sector_label": "ROBOTICS",
+  "requests": [
+    {
+      "execution_id": "exec-caution-001",
+      "action_type": "IRREVERSIBLE",
+      "sector_label": "ROBOTICS",
+      "requested_at_ms": 0
+    }
+  ],
+  "temporal": [
+    { "step_index": 0, "stable_ms": 200, "jitter": false },
+    { "step_index": 1, "stable_ms": 140, "jitter": false }
+  ],
+  "ube_vectors": [
+    { "step_index": 0, "phi": 0.70, "degradation_rate": 0.02, "risk_load": 0.20 },
+    { "step_index": 1, "phi": 0.71, "degradation_rate": 0.02, "risk_load": 0.22 }
+  ]
+}

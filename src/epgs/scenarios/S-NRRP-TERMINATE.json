@@ -1,0 +1,19 @@
+{
+  "scenario_id": "S-NRRP-TERMINATE",
+  "sector_label": "AEROSPACE_DEFENSE",
+  "requests": [
+    {
+      "execution_id": "exec-term-001",
+      "action_type": "IRREVERSIBLE",
+      "sector_label": "AEROSPACE_DEFENSE",
+      "requested_at_ms": 0
+    }
+  ],
+  "temporal": [
+    { "step_index": 0, "stable_ms": 200, "jitter": false },
+    { "step_index": 1, "stable_ms": 140, "jitter": false }
+  ],
+  "ube_vectors": [
+    { "step_index": 0, "phi": 0.20, "degradation_rate": 0.10, "risk_load": 0.70 }
+  ]
+}

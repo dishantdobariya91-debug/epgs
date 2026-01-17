@@ -1,0 +1,1 @@
+{'run_id': '11111111-1111-1111-1111-000000000000', 'scenario_id': 'S-STABLE-SAFE', 'sector_label': 'ENERGY', 'permission': 'ALLOW', 'stop_issued': False, 'terminal_stop': False, 'final_state': 'EXECUTED', 'rblock_hash': '273d22ab19b440b2f0c4f4302e0bac3862fcddd12a78b805874a8ae5caa73921', 'ledger_dir': 'output_ci\\scenario_0_run2\\ledger\\11111111-1111-1111-1111-000000000000'}

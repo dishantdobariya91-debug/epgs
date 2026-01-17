@@ -1,0 +1,1 @@
+{'run_id': '3ae417de-94b6-4780-879b-6e2f2ea5242a', 'scenario_id': 'S-STABLE-SAFE', 'sector_label': 'ENERGY', 'permission': 'ALLOW', 'stop_issued': False, 'terminal_stop': False, 'final_state': 'EXECUTED', 'rblock_hash': '3a79b235021aeab2a7426ce21cb62dcb4c94e565112bccc02e1a1b0d46602750', 'ledger_dir': 'output\\ledger\\3ae417de-94b6-4780-879b-6e2f2ea5242a'}

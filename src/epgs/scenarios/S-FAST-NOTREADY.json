@@ -1,0 +1,19 @@
+{
+  "scenario_id": "S-FAST-NOTREADY",
+  "sector_label": "MOBILITY",
+  "requests": [
+    {
+      "execution_id": "exec-fast-001",
+      "action_type": "IRREVERSIBLE",
+      "sector_label": "MOBILITY",
+      "requested_at_ms": 0
+    }
+  ],
+  "temporal": [
+    { "step_index": 0, "stable_ms": 120, "jitter": false },
+    { "step_index": 1, "stable_ms": 150, "jitter": false }
+  ],
+  "ube_vectors": [
+    { "step_index": 0, "phi": 0.90, "degradation_rate": 0.01, "risk_load": 0.20 }
+  ]
+}

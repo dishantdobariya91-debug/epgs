@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          pytest -q
+
+      - name: Determinism Proof Summary
+        run: |
+          python scripts/determinism_summary.py --out output_ci
+
+      - name: Upload EPGS Evidence Ledger (artifact)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: epgs-evidence-ledger
+          path: |
+            output_ci/**/ledger/**
+            output_ci/**/runs/**
+          if-no-files-found: error
+          retention-days: 14
