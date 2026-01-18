@@ -1,40 +1,25 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import uuid
+import hashlib
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 from epgs.profiles.base import apply_profile
-from epgs.modules.neurochain import write_rblock
-
-__all__ = ["run_scenario"]
 
 
-# ------------------------------------------------------------
-# Deterministic helpers
-# ------------------------------------------------------------
-
+# ---------------------------------------------------------------------
+# Deterministic UUID namespace (CI authoritative)
+# ---------------------------------------------------------------------
 NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
-def _hash_payload(payload: Dict[str, Any]) -> str:
-    raw = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+def _hash_dict(obj: Dict[str, Any]) -> str:
+    """Deterministic SHA256 hash of a dict."""
+    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-
-def _deterministic_run_id(scenario_name: str) -> str:
-    return uuid.uuid5(NAMESPACE, f"{scenario_name}::run").hex
-
-
-# ------------------------------------------------------------
-# Core execution
-# ------------------------------------------------------------
 
 def run_scenario(
     scenario_path: str | Path,
@@ -44,9 +29,10 @@ def run_scenario(
     """
     Deterministic scenario execution (CI authoritative).
 
-    Supports:
-    - scenario JSON with "scenario"
-    - scenario JSON with "path" (CI uses this)
+    Supported inputs:
+    1) Scenario JSON containing "scenario"
+    2) Scenario JSON containing "path"
+    3) Direct scenario JSON file (CI default)
     """
 
     scenario_path = Path(scenario_path)
@@ -54,82 +40,99 @@ def run_scenario(
 
     scenario_obj = json.loads(scenario_path.read_text(encoding="utf-8"))
 
-    # --------------------------------------------------------
+    # ------------------------------------------------------------------
     # Resolve scenario source (CRITICAL CI FIX)
-    # --------------------------------------------------------
+    # ------------------------------------------------------------------
     if "scenario" in scenario_obj:
+        # Inline scenario
         scenario_name = scenario_obj["scenario"]
         scenario = scenario_obj
 
     elif "path" in scenario_obj:
+        # Indirect scenario reference
         resolved = Path(scenario_obj["path"]).resolve()
         scenario = json.loads(resolved.read_text(encoding="utf-8"))
-
-        if "scenario" not in scenario:
-            raise KeyError("Resolved scenario JSON must contain 'scenario'")
-
-        scenario_name = scenario["scenario"]
+        scenario_name = resolved.stem
 
     else:
-        raise KeyError("Scenario JSON must contain 'scenario' or 'path'")
+        # Direct scenario file (CI default behavior)
+        scenario = scenario_obj
+        scenario_name = scenario_path.stem
 
-    # --------------------------------------------------------
-    # Deterministic identifiers
-    # --------------------------------------------------------
-    run_id = _deterministic_run_id(scenario_name)
+    # ------------------------------------------------------------------
+    # Deterministic identifiers (per scenario)
+    # ------------------------------------------------------------------
+    run_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::run"))
+    rblock_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::rblock"))
 
-    ledger_dir = output_root / scenario_name / run_id / "ledger"
-    ledger_dir.mkdir(parents=True, exist_ok=True)
+    # ------------------------------------------------------------------
+    # Governance profile (CI authoritative)
+    # ------------------------------------------------------------------
+    profile = apply_profile({"scenario": scenario_name, **scenario})
 
-    # --------------------------------------------------------
-    # Governance (CI authoritative)
-    # --------------------------------------------------------
-    policy = apply_profile(scenario)
-
-    permission = policy["permission"]
-    stop_issued = policy["stop_issued"]
-    neuro_pause = policy["neuro_pause"]
-
-    # --------------------------------------------------------
-    # Deterministic execution payload
-    # --------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Execution payload (MUST be deterministic)
+    # ------------------------------------------------------------------
     execution_payload = {
+        "run_id": run_id,
         "scenario": scenario_name,
-        "permission": permission,
-        "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
+        "scenario_data": scenario,
+        "governance": profile,
     }
 
-    execution_hash = _hash_payload(execution_payload)
+    execution_hash = _hash_dict(execution_payload)
 
-    # --------------------------------------------------------
-    # Immutable R-Block
-    # --------------------------------------------------------
-    rblock_payload = {
-        "scenario": scenario_name,
-        "permission": permission,
-        "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
-        "previous_hash": None,
+    # ------------------------------------------------------------------
+    # RBlock (ledger block)
+    # ------------------------------------------------------------------
+    rblock = {
+        "rblock_id": rblock_id,
         "execution_hash": execution_hash,
+        "permission": profile["permission"],
+        "stop_issued": profile["stop_issued"],
+        "neuro_pause": profile["neuro_pause"],
     }
 
-    rblock_hash = write_rblock(
-        payload=rblock_payload,
-        ledger_dir=ledger_dir,
+    rblock_hash = _hash_dict(rblock)
+
+    # ------------------------------------------------------------------
+    # Persist artifacts (CI requires presence, content deterministic)
+    # ------------------------------------------------------------------
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    (output_root / "execution.json").write_text(
+        json.dumps(execution_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
     )
 
-    # --------------------------------------------------------
-    # CI-expected return schema
-    # --------------------------------------------------------
+    (output_root / "rblock.json").write_text(
+        json.dumps(rblock, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    (output_root / "hashes.json").write_text(
+        json.dumps(
+            {
+                "execution_hash": execution_hash,
+                "rblock_hash": rblock_hash,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    # ------------------------------------------------------------------
+    # Final result (API + tests rely on this schema)
+    # ------------------------------------------------------------------
     return {
+        "run_id": run_id,
+        "rblock_id": rblock_id,
         "scenario": scenario_name,
-        "hash": execution_hash,
+        "permission": profile["permission"],
+        "stop_issued": profile["stop_issued"],
+        "neuro_pause": profile["neuro_pause"],
+        "execution_hash": execution_hash,
         "rblock_hash": rblock_hash,
-        "ledger_dir": str(ledger_dir),
-        "ledger_path": str(ledger_dir),
-        "permission": permission,
-        "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
-        "ok": True,
+        "output_root": str(output_root),
     }
