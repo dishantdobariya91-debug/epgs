@@ -65,10 +65,10 @@ def run_scenario(
     # --------------------------------------------------------
     # Final execution state (TEST-CORRECT)
     # --------------------------------------------------------
-    if terminal_stop or stop_issued:
+    if terminal_stop:
         final_state = "TERMINATED"
-    elif permission == "ASSIST":
-        final_state = "EXECUTED"
+    elif stop_issued:
+        final_state = "STOPPED"
     else:
         final_state = "COMPLETED"
 
