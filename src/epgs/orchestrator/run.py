@@ -8,9 +8,8 @@ from typing import Any, Dict
 
 from epgs.profiles.base import apply_profile
 
-
 # ------------------------------------------------------------------
-# CI-authoritative deterministic UUID namespace
+# Deterministic UUID namespace (CI authoritative)
 # ------------------------------------------------------------------
 NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
@@ -20,14 +19,18 @@ def _hash(obj: Dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _neuropause_block(enabled: bool) -> Dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "tau_ms_observed": 0,
+    }
+
+
 def run_scenario(
     scenario_path: str | Path,
     *,
     output_root: str | Path,
 ) -> Dict[str, Any]:
-    """
-    Deterministic scenario execution (CI authoritative).
-    """
 
     scenario_path = Path(scenario_path)
     output_root = Path(output_root)
@@ -50,18 +53,17 @@ def run_scenario(
     stop_issued = profile["stop_issued"]
     neuro_pause = profile["neuro_pause"]
 
-    # ------------------------------------------------------------------
-    # Terminal logic (MANDATORY CONTRACT)
-    # ------------------------------------------------------------------
     terminal_stop = permission == "BLOCK"
-    final_state = (
-        "TERMINATED"
-        if terminal_stop or stop_issued
-        else "COMPLETED"
-    )
+
+    if permission == "ASSIST":
+        final_state = "EXECUTED"
+    elif terminal_stop or stop_issued:
+        final_state = "TERMINATED"
+    else:
+        final_state = "COMPLETED"
 
     # ------------------------------------------------------------------
-    # Ledger directory (MANDATORY)
+    # Ledger directory
     # ------------------------------------------------------------------
     ledger_dir = output_root / "ledger"
     ledger_dir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +75,8 @@ def run_scenario(
         "type": "genesis",
         "run_id": run_id,
         "scenario": scenario_name,
+        "previous_hash": "GENESIS",
+        "neuropause": _neuropause_block(False),
     }
     genesis_hash = _hash(genesis)
 
@@ -90,8 +94,8 @@ def run_scenario(
         "scenario": scenario_name,
         "permission": permission,
         "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
-        "prev_hash": genesis_hash,
+        "previous_hash": genesis_hash,
+        "neuropause": _neuropause_block(neuro_pause),
     }
     execution_hash = _hash(execution)
 
@@ -101,7 +105,7 @@ def run_scenario(
     )
 
     # ------------------------------------------------------------------
-    # RBlock
+    # R-Block (tamper-sensitive)
     # ------------------------------------------------------------------
     rblock = {
         "type": "rblock",
@@ -109,7 +113,8 @@ def run_scenario(
         "permission": permission,
         "terminal_stop": terminal_stop,
         "final_state": final_state,
-        "prev_hash": execution_hash,
+        "previous_hash": execution_hash,
+        "neuropause": _neuropause_block(neuro_pause),
     }
     rblock_hash = _hash(rblock)
 
@@ -119,7 +124,7 @@ def run_scenario(
     )
 
     # ------------------------------------------------------------------
-    # Return schema (TEST-AUTHORITATIVE)
+    # Return schema (TEST CONTRACT)
     # ------------------------------------------------------------------
     return {
         "run_id": run_id,
