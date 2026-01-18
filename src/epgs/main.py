@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 
 from epgs.orchestrator.run import run_scenario
-from epgs.ledger.verify import verify_chain  # <-- FIX THIS IMPORT
+from epgs.orchestrator.replay import verify_chain
 
 app = FastAPI(
     title="EPGS – Execution Permission Gate Simulator",
@@ -15,56 +15,52 @@ app = FastAPI(
 )
 
 
+# ------------------------------------------------------------
+# Models
+# ------------------------------------------------------------
 class RunRequest(BaseModel):
     scenario_path: str
     output_root: Optional[str] = None
 
 
-class VerifyRequest(BaseModel):
-    ledger_dir: Optional[str] = None
-    output_root: Optional[str] = None
+# ------------------------------------------------------------
+# Ledger normalization (CI-FINAL)
+# ------------------------------------------------------------
+def normalize_ledger_dir(ledger_dir: str) -> Path:
+    p = Path(ledger_dir)
 
+    # ✅ ABSOLUTE RULE: if <path>/ledger exists, use it
+    ledger = p / "ledger"
+    if ledger.exists() and ledger.is_dir():
+        return ledger
 
-def normalize_ledger_dir(
-    ledger_dir: Optional[str],
-    output_root: Optional[str],
-) -> Path:
-    if ledger_dir:
-        p = Path(ledger_dir)
+    # rblock file → parent
+    if p.exists() and p.is_file() and p.suffix == ".json":
+        return p.parent
 
-        if p.exists() and p.is_file() and p.suffix == ".json":
-            return p.parent
-
-        if p.exists() and p.is_dir():
-            if list(p.glob("*.json")):
-                return p
-            ledger = p / "ledger"
-            if ledger.exists():
-                return ledger
-            return p
-
-        ledger = p / "ledger"
-        if ledger.exists():
-            return ledger
-
+    # direct ledger dir
+    if p.exists() and p.is_dir():
         return p
 
-    if output_root:
-        return Path(output_root) / "ledger"
-
-    return Path(".")
+    return p  # verify_chain will fail cleanly if invalid
 
 
+# ------------------------------------------------------------
+# API: run scenario
+# ------------------------------------------------------------
 @app.post("/run")
 def run(req: RunRequest):
-    out = req.output_root or "."
-    try:
-        return run_scenario(req.scenario_path, output_root=out)  # real signature
-    except TypeError:
-        return run_scenario(req.scenario_path, out)  # monkeypatch signature
+    if req.output_root is not None:
+        return run_scenario(req.scenario_path, req.output_root)
+    return run_scenario(req.scenario_path)
 
 
-@app.post("/verify")
-def verify(req: VerifyRequest):
-    ledger_path = normalize_ledger_dir(req.ledger_dir, req.output_root)
+# ------------------------------------------------------------
+# API: verify ledger (GET — REQUIRED BY TESTS)
+# ------------------------------------------------------------
+@app.get("/verify")
+def verify(
+    ledger_dir: str = Query(..., description="Ledger directory"),
+):
+    ledger_path = normalize_ledger_dir(ledger_dir)
     return verify_chain(str(ledger_path))
