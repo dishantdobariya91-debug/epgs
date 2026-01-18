@@ -16,7 +16,7 @@ NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 def run_scenario(
     scenario_path: str,
-    output_root: str,
+    output_root: str = ".",
 ) -> Dict[str, Any]:
     scenario_path = Path(scenario_path).resolve()
     output_root = Path(output_root).resolve()
@@ -67,11 +67,21 @@ def run_scenario(
     final_state = "TERMINATED" if terminal_stop else "EXECUTED"
 
     # --------------------------------------------------------
-    # Ledger + R-Block
+    # Ledger directory (RESET PER EXECUTION — CRITICAL FIX)
     # --------------------------------------------------------
     ledger_dir = output_root / "ledger"
-    ledger_dir.mkdir(parents=True, exist_ok=True)
 
+    # IMPORTANT:
+    # Each run must be isolated. Clear any previous R-Blocks.
+    if ledger_dir.exists():
+        for f in ledger_dir.glob("*.json"):
+            f.unlink()
+    else:
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------
+    # R-Block payload
+    # --------------------------------------------------------
     rblock_payload = {
         "scenario": scenario["scenario"],
         "run_id": run_id,
@@ -107,7 +117,7 @@ def run_scenario(
     )
 
     # --------------------------------------------------------
-    # Return result (REPLAY-SAFE, PATH-AGNOSTIC)
+    # Return result (API + REPLAY SAFE)
     # --------------------------------------------------------
     return {
         "run_id": run_id,
