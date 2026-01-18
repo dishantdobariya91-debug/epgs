@@ -60,17 +60,11 @@ def run_scenario(
     stop_issued = profile["stop_issued"]
     neuro_pause = profile["neuro_pause"]
 
-    terminal_stop = permission == "BLOCK"
-
     # --------------------------------------------------------
-    # Final execution state (TEST-CORRECT)
+    # FINAL EXECUTION STATE (EPGS CANONICAL LAW)
     # --------------------------------------------------------
-    if terminal_stop:
-        final_state = "TERMINATED"
-    elif stop_issued:
-        final_state = "STOPPED"
-    else:
-        final_state = "COMPLETED"
+    terminal_stop = (permission == "BLOCK") or stop_issued
+    final_state = "TERMINATED" if terminal_stop else "EXECUTED"
 
     # --------------------------------------------------------
     # Ledger + R-Block
@@ -112,10 +106,8 @@ def run_scenario(
         encoding="utf-8",
     )
 
-    execution_hash = rblock_hash
-
     # --------------------------------------------------------
-    # Return result (REPLAY-SAFE)
+    # Return result (REPLAY-SAFE, PATH-AGNOSTIC)
     # --------------------------------------------------------
     return {
         "run_id": run_id,
@@ -125,6 +117,6 @@ def run_scenario(
         "terminal_stop": terminal_stop,
         "final_state": final_state,
         "neuro_pause": neuro_pause,
-        "execution_hash": execution_hash,
+        "execution_hash": rblock_hash,
         "ledger_dir": str(ledger_dir),
     }
