@@ -9,14 +9,13 @@ from typing import Any, Dict
 from epgs.profiles.base import apply_profile
 
 
-# ---------------------------------------------------------------------
-# Deterministic UUID namespace (CI authoritative)
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# CI-authoritative deterministic UUID namespace
+# ------------------------------------------------------------------
 NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
-def _hash_dict(obj: Dict[str, Any]) -> str:
-    """Deterministic SHA256 hash of a dict."""
+def _hash(obj: Dict[str, Any]) -> str:
     payload = json.dumps(obj, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -28,111 +27,110 @@ def run_scenario(
 ) -> Dict[str, Any]:
     """
     Deterministic scenario execution (CI authoritative).
-
-    Supported inputs:
-    1) Scenario JSON containing "scenario"
-    2) Scenario JSON containing "path"
-    3) Direct scenario JSON file (CI default)
     """
 
     scenario_path = Path(scenario_path)
     output_root = Path(output_root)
 
-    scenario_obj = json.loads(scenario_path.read_text(encoding="utf-8"))
+    scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+    scenario_name = scenario.get("scenario", scenario_path.stem)
 
     # ------------------------------------------------------------------
-    # Resolve scenario source (CRITICAL CI FIX)
-    # ------------------------------------------------------------------
-    if "scenario" in scenario_obj:
-        # Inline scenario
-        scenario_name = scenario_obj["scenario"]
-        scenario = scenario_obj
-
-    elif "path" in scenario_obj:
-        # Indirect scenario reference
-        resolved = Path(scenario_obj["path"]).resolve()
-        scenario = json.loads(resolved.read_text(encoding="utf-8"))
-        scenario_name = resolved.stem
-
-    else:
-        # Direct scenario file (CI default behavior)
-        scenario = scenario_obj
-        scenario_name = scenario_path.stem
-
-    # ------------------------------------------------------------------
-    # Deterministic identifiers (per scenario)
+    # Deterministic IDs (per scenario)
     # ------------------------------------------------------------------
     run_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::run"))
     rblock_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::rblock"))
 
     # ------------------------------------------------------------------
-    # Governance profile (CI authoritative)
+    # Governance
     # ------------------------------------------------------------------
     profile = apply_profile({"scenario": scenario_name, **scenario})
 
+    permission = profile["permission"]
+    stop_issued = profile["stop_issued"]
+    neuro_pause = profile["neuro_pause"]
+
     # ------------------------------------------------------------------
-    # Execution payload (MUST be deterministic)
+    # Terminal logic (MANDATORY CONTRACT)
     # ------------------------------------------------------------------
-    execution_payload = {
+    terminal_stop = permission == "BLOCK"
+    final_state = (
+        "TERMINATED"
+        if terminal_stop or stop_issued
+        else "COMPLETED"
+    )
+
+    # ------------------------------------------------------------------
+    # Ledger directory (MANDATORY)
+    # ------------------------------------------------------------------
+    ledger_dir = output_root / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Genesis block
+    # ------------------------------------------------------------------
+    genesis = {
+        "type": "genesis",
         "run_id": run_id,
         "scenario": scenario_name,
-        "scenario_data": scenario,
-        "governance": profile,
     }
+    genesis_hash = _hash(genesis)
 
-    execution_hash = _hash_dict(execution_payload)
-
-    # ------------------------------------------------------------------
-    # RBlock (ledger block)
-    # ------------------------------------------------------------------
-    rblock = {
-        "rblock_id": rblock_id,
-        "execution_hash": execution_hash,
-        "permission": profile["permission"],
-        "stop_issued": profile["stop_issued"],
-        "neuro_pause": profile["neuro_pause"],
-    }
-
-    rblock_hash = _hash_dict(rblock)
-
-    # ------------------------------------------------------------------
-    # Persist artifacts (CI requires presence, content deterministic)
-    # ------------------------------------------------------------------
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    (output_root / "execution.json").write_text(
-        json.dumps(execution_payload, indent=2, sort_keys=True),
+    (ledger_dir / "000_genesis.json").write_text(
+        json.dumps(genesis, indent=2, sort_keys=True),
         encoding="utf-8",
     )
 
-    (output_root / "rblock.json").write_text(
+    # ------------------------------------------------------------------
+    # Execution block
+    # ------------------------------------------------------------------
+    execution = {
+        "type": "execution",
+        "run_id": run_id,
+        "scenario": scenario_name,
+        "permission": permission,
+        "stop_issued": stop_issued,
+        "neuro_pause": neuro_pause,
+        "prev_hash": genesis_hash,
+    }
+    execution_hash = _hash(execution)
+
+    (ledger_dir / "001_execution.json").write_text(
+        json.dumps(execution, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    # ------------------------------------------------------------------
+    # RBlock
+    # ------------------------------------------------------------------
+    rblock = {
+        "type": "rblock",
+        "rblock_id": rblock_id,
+        "permission": permission,
+        "terminal_stop": terminal_stop,
+        "final_state": final_state,
+        "prev_hash": execution_hash,
+    }
+    rblock_hash = _hash(rblock)
+
+    (ledger_dir / "002_rblock.json").write_text(
         json.dumps(rblock, indent=2, sort_keys=True),
         encoding="utf-8",
     )
 
-    (output_root / "hashes.json").write_text(
-        json.dumps(
-            {
-                "execution_hash": execution_hash,
-                "rblock_hash": rblock_hash,
-            },
-            indent=2,
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-
     # ------------------------------------------------------------------
-    # Final result (API + tests rely on this schema)
+    # Return schema (TEST-AUTHORITATIVE)
     # ------------------------------------------------------------------
     return {
         "run_id": run_id,
         "rblock_id": rblock_id,
         "scenario": scenario_name,
-        "permission": profile["permission"],
-        "stop_issued": profile["stop_issued"],
-        "neuro_pause": profile["neuro_pause"],
+        "permission": permission,
+        "stop_issued": stop_issued,
+        "neuro_pause": neuro_pause,
+        "terminal_stop": terminal_stop,
+        "final_state": final_state,
         "execution_hash": execution_hash,
         "rblock_hash": rblock_hash,
-        "output_root": str(output_root),
+        "ledger_dir": str(ledger_dir),
     }
