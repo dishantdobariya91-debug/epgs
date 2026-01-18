@@ -1,111 +1,109 @@
-# src/epgs/orchestrator/run.py
-
 from __future__ import annotations
 
 import json
-import hashlib
 import uuid
+import hashlib
 from pathlib import Path
 from typing import Dict, Any
 
-from epgs.profiles.base import apply_profile
 from epgs.modules.neurochain import write_rblock
+from epgs.profiles.base import apply_profile
 
-__all__ = ["run_scenario"]
 
-# --------------------------------------------------------------
-# Deterministic UUID namespace (constant, CI-authoritative)
-# --------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Deterministic namespace (CI authoritative – DO NOT CHANGE)
+# ---------------------------------------------------------------------
 NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
 def _hash_payload(payload: Dict[str, Any]) -> str:
     """
-    Canonical SHA-256 hash of execution payload.
+    Canonical deterministic hash of execution payload.
     """
-    raw = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
 def run_scenario(
-    scenario_path: str | Path,
-    *,
-    output_root: str | Path,
+    scenario_path: Path,
+    output_root: Path,
 ) -> Dict[str, Any]:
     """
-    Deterministic scenario execution (CI authoritative).
-    Same scenario input => same hashes, every time.
+    Run a single scenario deterministically.
+
+    Supports:
+    - Inline scenario JSON (contains "scenario")
+    - Scenario reference JSON (contains "path")
     """
 
     scenario_path = Path(scenario_path)
     output_root = Path(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
 
-    scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+    # -----------------------------------------------------------------
+    # Load scenario manifest
+    # -----------------------------------------------------------------
+    raw = json.loads(scenario_path.read_text(encoding="utf-8"))
 
-    if "scenario" not in scenario:
-        raise KeyError("Scenario JSON must contain 'scenario'")
+    # --------------------------------------------------------------
+    # Scenario resolution (CI-authoritative)
+    # --------------------------------------------------------------
+    if "scenario" in raw:
+        scenario = raw
+    elif "path" in raw:
+        scenario_file = Path(raw["path"])
+        if not scenario_file.is_absolute():
+            scenario_file = scenario_path.parent / scenario_file
+        scenario = json.loads(scenario_file.read_text(encoding="utf-8"))
+    else:
+        raise KeyError("Scenario JSON must contain 'scenario' or 'path'")
 
     scenario_name = scenario["scenario"]
 
-    # ----------------------------------------------------------
+    # -----------------------------------------------------------------
     # Deterministic identifiers (per scenario)
-    # ----------------------------------------------------------
+    # -----------------------------------------------------------------
     run_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::run"))
     rblock_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::rblock"))
 
-    ledger_dir = output_root / scenario_name / run_id / "ledger"
-    ledger_dir.mkdir(parents=True, exist_ok=True)
+    # -----------------------------------------------------------------
+    # Apply governance profile
+    # -----------------------------------------------------------------
+    profile = apply_profile(scenario)
 
-    # ----------------------------------------------------------
-    # Apply deterministic governance policy
-    # ----------------------------------------------------------
-    policy = apply_profile(scenario)
-
-    permission = policy["permission"]
-    stop_issued = policy["stop_issued"]
-    neuro_pause = policy["neuro_pause"]
-
-    # ----------------------------------------------------------
-    # Canonical execution payload (NO run_id, NO UUIDs)
-    # ----------------------------------------------------------
-    execution_payload = {
+    # -----------------------------------------------------------------
+    # Execution payload (hash-authoritative)
+    # -----------------------------------------------------------------
+    execution_payload: Dict[str, Any] = {
         "scenario": scenario_name,
-        "permission": permission,
-        "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
+        "run_id": run_id,
+        "rblock_id": rblock_id,
+        "permission": profile["permission"],
+        "stop_issued": profile["stop_issued"],
+        "neuro_pause": profile["neuro_pause"],
     }
 
     execution_hash = _hash_payload(execution_payload)
 
-    # ----------------------------------------------------------
-    # Immutable R-Block payload
-    # ----------------------------------------------------------
-    rblock_payload = {
-        "rblock_id": rblock_id,
-        "scenario": scenario_name,
-        "permission": permission,
-        "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
-        "previous_hash": None,
-        "execution_hash": execution_hash,
-    }
-
+    # -----------------------------------------------------------------
+    # Write deterministic R-block ledger entry
+    # -----------------------------------------------------------------
+    ledger_dir = output_root / "ledger"
     rblock_hash = write_rblock(
-        payload=rblock_payload,
+        payload=execution_payload,
         ledger_dir=ledger_dir,
     )
 
+    # -----------------------------------------------------------------
+    # Final result (used by tests)
+    # -----------------------------------------------------------------
     return {
         "scenario": scenario_name,
-        "hash": execution_hash,
+        "run_id": run_id,
+        "rblock_id": rblock_id,
+        "execution_hash": execution_hash,
         "rblock_hash": rblock_hash,
-        "ledger_dir": str(ledger_dir),
-        "permission": permission,
-        "stop_issued": stop_issued,
-        "neuro_pause": neuro_pause,
-        "ok": True,
+        "permission": profile["permission"],
+        "stop_issued": profile["stop_issued"],
+        "neuro_pause": profile["neuro_pause"],
     }
