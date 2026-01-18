@@ -15,34 +15,18 @@ NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
 def run_scenario(
-    scenario_path: str | Path,
-    *,
-    output_root: str | Path,
+    scenario_path: str,
+    output_root: str,
 ) -> Dict[str, Any]:
-    """
-    Deterministic scenario execution.
-
-    Accepts scenario schemas:
-    - { "scenario": "NAME" }          (legacy)
-    - { "scenario_id": "NAME" }       (current)
-    - { "path": "other.json" }        (wrapper)
-    - filename stem fallback
-    """
-
-    scenario_path = Path(scenario_path)
-    output_root = Path(output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    scenario_path = Path(scenario_path).resolve()
+    output_root = Path(output_root).resolve()
 
     scenario_obj = json.loads(scenario_path.read_text(encoding="utf-8"))
 
     # --------------------------------------------------------
     # Resolve scenario source (robust + deterministic)
     # --------------------------------------------------------
-    scenario = None
-    scenario_name = None
-
     if "path" in scenario_obj:
-        # Wrapper pointing to another JSON file
         resolved = (scenario_path.parent / scenario_obj["path"]).resolve()
         scenario = json.loads(resolved.read_text(encoding="utf-8"))
         scenario_name = (
@@ -51,7 +35,6 @@ def run_scenario(
             or resolved.stem
         )
     else:
-        # Direct scenario JSON
         scenario = scenario_obj
         scenario_name = (
             scenario.get("scenario")
@@ -59,49 +42,46 @@ def run_scenario(
             or scenario_path.stem
         )
 
-    # Canonical internal key expected downstream
+    # Canonical internal key
     scenario["scenario"] = str(scenario_name)
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     # Deterministic identifiers (per scenario)
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     run_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::run"))
     rblock_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::rblock"))
 
-    # ------------------------------------------------------------
-    # Apply governance profile
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
+    # Governance profile
+    # --------------------------------------------------------
     profile = apply_profile(scenario)
 
     permission = profile["permission"]
     stop_issued = profile["stop_issued"]
     neuro_pause = profile["neuro_pause"]
 
-    # ------------------------------------------------------------
-    # Determine terminal semantics
-    # ------------------------------------------------------------
     terminal_stop = permission == "BLOCK"
 
-    if stop_issued:
+    # --------------------------------------------------------
+    # Final execution state (TEST-CORRECT)
+    # --------------------------------------------------------
+    if terminal_stop or stop_issued:
         final_state = "TERMINATED"
     elif permission == "ASSIST":
         final_state = "EXECUTED"
     else:
         final_state = "COMPLETED"
 
-    # ------------------------------------------------------------
-    # Ledger directory
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
+    # Ledger + R-Block
+    # --------------------------------------------------------
     ledger_dir = output_root / "ledger"
     ledger_dir.mkdir(parents=True, exist_ok=True)
 
-    # ------------------------------------------------------------
-    # Build R-Block payload (NO hashes yet)
-    # ------------------------------------------------------------
-    payload: Dict[str, Any] = {
+    rblock_payload = {
+        "scenario": scenario["scenario"],
         "run_id": run_id,
         "rblock_id": rblock_id,
-        "scenario": scenario_name,
         "permission": permission,
         "stop_issued": stop_issued,
         "terminal_stop": terminal_stop,
@@ -112,21 +92,17 @@ def run_scenario(
         },
     }
 
-    # ------------------------------------------------------------
-    # Chain hashing (authoritative)
-    # ------------------------------------------------------------
     previous_hash = GENESIS_HASH
-    rblock_hash = chained_hash(payload, previous_hash)
+    rblock_hash = chained_hash(rblock_payload, previous_hash)
 
-    rblock = dict(payload)
-    rblock["previous_hash"] = previous_hash
-    rblock["rblock_hash"] = rblock_hash
+    rblock = {
+        **rblock_payload,
+        "previous_hash": previous_hash,
+        "rblock_hash": rblock_hash,
+    }
 
-    # ------------------------------------------------------------
-    # Write ledger file (stable ordering)
-    # ------------------------------------------------------------
-    ledger_path = ledger_dir / "0001.json"
-    ledger_path.write_text(
+    rblock_path = ledger_dir / f"{rblock_id}.json"
+    rblock_path.write_text(
         json.dumps(
             rblock,
             sort_keys=True,
@@ -136,9 +112,11 @@ def run_scenario(
         encoding="utf-8",
     )
 
-    # ------------------------------------------------------------
-    # Return execution result
-    # ------------------------------------------------------------
+    execution_hash = rblock_hash
+
+    # --------------------------------------------------------
+    # Return result (REPLAY-SAFE)
+    # --------------------------------------------------------
     return {
         "run_id": run_id,
         "rblock_id": rblock_id,
@@ -147,7 +125,6 @@ def run_scenario(
         "terminal_stop": terminal_stop,
         "final_state": final_state,
         "neuro_pause": neuro_pause,
+        "execution_hash": execution_hash,
         "ledger_dir": str(ledger_dir),
-        "execution_hash": rblock_hash,
-        "output_root": str(output_root),
     }
