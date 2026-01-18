@@ -4,22 +4,29 @@ import json
 import uuid
 import hashlib
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict, Any
 
 from epgs.profiles.base import apply_profile
 
 # ------------------------------------------------------------------
-# Deterministic UUID namespace (CI authoritative)
+# Deterministic UUID namespace
 # ------------------------------------------------------------------
 NAMESPACE = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
-def _hash(obj: Dict[str, Any]) -> str:
-    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _hash_payload(payload: Dict[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _neuropause_block(enabled: bool) -> Dict[str, Any]:
+def _with_hash(payload: Dict[str, Any]) -> Dict[str, Any]:
+    h = _hash_payload(payload)
+    out = dict(payload)
+    out["rblock_hash"] = h
+    return out
+
+
+def _neuropause(enabled: bool) -> Dict[str, Any]:
     return {
         "enabled": enabled,
         "tau_ms_observed": 0,
@@ -39,7 +46,7 @@ def run_scenario(
     scenario_name = scenario.get("scenario", scenario_path.stem)
 
     # ------------------------------------------------------------------
-    # Deterministic IDs (per scenario)
+    # Deterministic IDs
     # ------------------------------------------------------------------
     run_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::run"))
     rblock_id = str(uuid.uuid5(NAMESPACE, f"{scenario_name}::rblock"))
@@ -47,11 +54,11 @@ def run_scenario(
     # ------------------------------------------------------------------
     # Governance
     # ------------------------------------------------------------------
-    profile = apply_profile({"scenario": scenario_name, **scenario})
+    policy = apply_profile({"scenario": scenario_name, **scenario})
 
-    permission = profile["permission"]
-    stop_issued = profile["stop_issued"]
-    neuro_pause = profile["neuro_pause"]
+    permission = policy["permission"]
+    stop_issued = policy["stop_issued"]
+    neuro_pause = policy["neuro_pause"]
 
     terminal_stop = permission == "BLOCK"
 
@@ -65,20 +72,20 @@ def run_scenario(
     # ------------------------------------------------------------------
     # Ledger directory
     # ------------------------------------------------------------------
-    ledger_dir = output_root / "ledger"
+    ledger_dir = Path(output_root) / "ledger"
     ledger_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Genesis block
     # ------------------------------------------------------------------
-    genesis = {
+    genesis_payload = {
         "type": "genesis",
         "run_id": run_id,
         "scenario": scenario_name,
         "previous_hash": "GENESIS",
-        "neuropause": _neuropause_block(False),
+        "neuropause": _neuropause(False),
     }
-    genesis_hash = _hash(genesis)
+    genesis = _with_hash(genesis_payload)
 
     (ledger_dir / "000_genesis.json").write_text(
         json.dumps(genesis, indent=2, sort_keys=True),
@@ -88,16 +95,16 @@ def run_scenario(
     # ------------------------------------------------------------------
     # Execution block
     # ------------------------------------------------------------------
-    execution = {
+    execution_payload = {
         "type": "execution",
         "run_id": run_id,
         "scenario": scenario_name,
         "permission": permission,
         "stop_issued": stop_issued,
-        "previous_hash": genesis_hash,
-        "neuropause": _neuropause_block(neuro_pause),
+        "previous_hash": genesis["rblock_hash"],
+        "neuropause": _neuropause(neuro_pause),
     }
-    execution_hash = _hash(execution)
+    execution = _with_hash(execution_payload)
 
     (ledger_dir / "001_execution.json").write_text(
         json.dumps(execution, indent=2, sort_keys=True),
@@ -105,18 +112,18 @@ def run_scenario(
     )
 
     # ------------------------------------------------------------------
-    # R-Block (tamper-sensitive)
+    # R-Block
     # ------------------------------------------------------------------
-    rblock = {
+    rblock_payload = {
         "type": "rblock",
         "rblock_id": rblock_id,
         "permission": permission,
         "terminal_stop": terminal_stop,
         "final_state": final_state,
-        "previous_hash": execution_hash,
-        "neuropause": _neuropause_block(neuro_pause),
+        "previous_hash": execution["rblock_hash"],
+        "neuropause": _neuropause(neuro_pause),
     }
-    rblock_hash = _hash(rblock)
+    rblock = _with_hash(rblock_payload)
 
     (ledger_dir / "002_rblock.json").write_text(
         json.dumps(rblock, indent=2, sort_keys=True),
@@ -124,7 +131,7 @@ def run_scenario(
     )
 
     # ------------------------------------------------------------------
-    # Return schema (TEST CONTRACT)
+    # Return contract (tests rely on this)
     # ------------------------------------------------------------------
     return {
         "run_id": run_id,
@@ -135,7 +142,7 @@ def run_scenario(
         "neuro_pause": neuro_pause,
         "terminal_stop": terminal_stop,
         "final_state": final_state,
-        "execution_hash": execution_hash,
-        "rblock_hash": rblock_hash,
+        "execution_hash": execution["rblock_hash"],
+        "rblock_hash": rblock["rblock_hash"],
         "ledger_dir": str(ledger_dir),
     }
