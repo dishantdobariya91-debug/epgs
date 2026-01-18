@@ -57,10 +57,9 @@ def normalize_ledger_dir(
 
 @app.post("/run")
 def run(req: RunRequest):
-    return run_scenario(
-        scenario_path=req.scenario_path,
-        output_root=req.output_root or ".",
-    )
+    if req.output_root is not None:
+        return run_scenario(req.scenario_path, req.output_root)
+    return run_scenario(req.scenario_path)
 
 
 @app.post("/verify")
